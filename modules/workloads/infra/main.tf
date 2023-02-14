@@ -16,6 +16,59 @@ resource "helm_release" "kube_state_metrics" {
   }
 }
 
+resource "helm_release" "kube_cost" {
+  count            = var.enable_kube_cost ? 1 : 0
+  chart            = var.kc_config.helm_chart_name
+  create_namespace = var.kc_config.create_namespace
+  namespace        = var.kc_config.k8s_namespace
+  name             = var.kc_config.helm_release_name
+  version          = var.kc_config.helm_chart_version
+  repository       = var.kc_config.helm_repo_url
+  set {
+    name  = "amp.enabled"
+    value = "true"
+  }
+  set {
+    name  = "amp.prometheusServerEndpoint"
+    value = "http://localhost:8005/workspaces/ws-109ee092-56e2-4c17-ae69-b6c6ab29936d"
+    type  = "string"
+  }
+  set {
+    name  = "amp.remoteWriteService"
+    value = "https://aps-workspaces.us-east-1.amazonaws.com/workspaces/ws-109ee092-56e2-4c17-ae69-b6c6ab29936d/api/v1/remote_write"
+    type  = "string"
+  }
+  set {
+    name  = "amp.sigv4.region"
+    value = "us-east-1"
+    type  = "string"
+  }
+  set {
+    name  = "amp.sigv4.region"
+    value = "us-east-1"
+    type  = "string"
+  }
+
+  set {
+    name  = "sigV4Proxy.region"
+    value = "us-east-1"
+    type  = "string"
+  }
+
+  set {
+    name  = "sigV4Proxy.host"
+    value = "aps-workspaces.us-east-1.amazonaws.com"
+    type  = "string"
+  }
+
+  dynamic "set" {
+    for_each = var.kc_config.helm_settings
+    content {
+      name  = set.key
+      value = set.value
+    }
+  }
+} 
 resource "helm_release" "prometheus_node_exporter" {
   count            = var.enable_node_exporter ? 1 : 0
   chart            = var.ne_config.helm_chart_name
@@ -35,13 +88,13 @@ resource "helm_release" "prometheus_node_exporter" {
 }
 
 module "helm_addon" {
-  source = "github.com/aws-ia/terraform-aws-eks-blueprints//modules/kubernetes-addons/helm-addon?ref=v4.13.1"
+  source = "github.com/aws-ia/terraform-aws-eks-blueprints/modules/kubernetes-addons/helm-addon"
 
   helm_config = merge(
     {
       name        = local.name
       chart       = "${path.module}/otel-config"
-      version     = "0.4.0"
+      version     = "0.2.0"
       namespace   = local.namespace
       description = "ADOT helm Chart deployment configuration"
     },
@@ -58,53 +111,29 @@ module "helm_addon" {
       value = var.managed_prometheus_workspace_region
     },
     {
+      name  = "prometheusMetricsEndpoint"
+      value = "metrics"
+    },
+    {
+      name  = "prometheusMetricsPort"
+      value = 8888
+    },
+    {
+      name  = "scrapeInterval"
+      value = "15s"
+    },
+    {
+      name  = "scrapeTimeout"
+      value = "10s"
+    },
+    {
+      name  = "scrapeSampleLimit"
+      value = 1000
+    },
+    {
       name  = "ekscluster"
       value = local.context.eks_cluster_id
     },
-    {
-      name  = "globalScrapeInterval"
-      value = var.prometheus_config.global_scrape_interval
-    },
-    {
-      name  = "globalScrapeTimeout"
-      value = var.prometheus_config.global_scrape_timeout
-    },
-    {
-      name  = "accountId"
-      value = local.context.aws_caller_identity_account_id
-    },
-    {
-      name  = "enableTracing"
-      value = var.enable_tracing
-    },
-    {
-      name  = "otlpHttpEndpoint"
-      value = var.tracing_config.otlp_http_endpoint
-    },
-    {
-      name  = "otlpGrpcEndpoint"
-      value = var.tracing_config.otlp_grpc_endpoint
-    },
-    {
-      name  = "tracingTimeout"
-      value = var.tracing_config.timeout
-    },
-    {
-      name  = "tracingSendBatchSize"
-      value = var.tracing_config.send_batch_size
-    },
-    {
-      name  = "enableCustomMetrics"
-      value = var.enable_custom_metrics
-    },
-    {
-      name  = "customMetricsPorts"
-      value = format(".*:(%s)$", join("|", var.custom_metrics_config.ports))
-    },
-    {
-      name  = "customMetricsDroppedSeriesPrefixes"
-      value = format("(%s.*)$", join(".*|", var.custom_metrics_config.dropped_series_prefixes))
-    }
   ]
 
   irsa_config = {
@@ -112,10 +141,7 @@ module "helm_addon" {
     kubernetes_namespace              = local.namespace
     create_kubernetes_service_account = true
     kubernetes_service_account        = try(var.helm_config.service_account, local.name)
-    irsa_iam_policies = [
-      "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonPrometheusRemoteWriteAccess",
-      "arn:${data.aws_partition.current.partition}:iam::aws:policy/AWSXrayWriteOnlyAccess"
-    ]
+    irsa_iam_policies                 = ["arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonPrometheusRemoteWriteAccess"]
   }
 
   addon_context = local.context
